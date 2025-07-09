@@ -19,26 +19,16 @@
 #include "queue.h"
 #include "semphr.h"
 
-
-/**
- * @brief Скорость работы I2C
- */
-typedef enum
-{
-	I2C_MASTER_SPEED_100kHz,
-	I2C_MASTER_SPEED_400kHz,
-	I2C_MASTER_SPEED_CNT
-} I2C_MasterSpeed_t;
-
 /**
  * @brief Режимы работы I2C
  */
 typedef enum
 {
-	I2C_MASTER_OP_WRITE_THEN_READ,  // Запись команды + чтение данных (с RESTART)
-	I2C_MASTER_OP_WRITE_ONLY,       // Только запись (адрес + команда + данные)
-	I2C_MASTER_OP_READ_ONLY         // Только чтение (редко)
+    I2C_OP_WRITE_THEN_READ,  // Запись команды + чтение данных (с RESTART)
+    I2C_OP_WRITE_ONLY,       // Только запись (адрес + команда + данные)
+    I2C_OP_READ_ONLY         // Только чтение (редко)
 } I2C_Master_OpMode_t;
+
 
 /**
  * @brief Структура транзакции I2C
@@ -60,9 +50,7 @@ typedef struct {
  * @brief Инициализация драйвера I2C
  * @details Создает очередь и выполняет настройку аппаратного модуля I2C
  */
-void Drv_I2C_Master_Init(I2C_MasterSpeed_t speed);
-
-void Drv_I2C_Master_SetSpeed(I2C_MasterSpeed_t speed);
+void Drv_I2C_Master_Init(void);
 
 /**
  * @brief Отправка транзакции в очередь на выполнение
