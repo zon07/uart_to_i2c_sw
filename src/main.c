@@ -1,6 +1,5 @@
 
 //#include "riscv_csr_encoding.h"
-#include <leds_controller/leds.h>
 #include "scr1_csr_encoding.h"
 
 #include "mik32_memory_map.h"
@@ -18,12 +17,11 @@
 #include "task.h"
 #include "semphr.h"
 
-#include "BspLedsController_If.h"
-#include "BspUartTransport_If.h"
-#include "i2c_driver_master.h"
 
 #include "app.h"
-
+#include "ports_driver.h"
+#include "BspUartTransport_If.h"
+#include "i2c_driver_master.h"
 
 extern unsigned long __TEXT_START__;
 
@@ -63,8 +61,24 @@ void main()
     	Error_handler();
     }
 
+	/* BSP Портов включения питания и наличия*/
+	if(!Bsp_Ports_Init_If())
+    {
+    	Error_handler();
+    }
+
+    /* BSP Инициализация I2C */
+    Drv_I2C_Master_Init();
+
+
+    /* BSP Инициализация Uart */
+    if(Bsp_UartTransport_Init_If(9600) == false)
+    {
+    	Error_handler();
+    }
+
     /* Создаем задачу Application */
-    if(App_Init() == false)
+    if(!App_Init())
     {
     	Error_handler();
     }
@@ -141,7 +155,7 @@ void ext_trap_handler(void)
     if (EPIC->RAW_STATUS & EPIC_LINE_M(EPIC_LINE_I2C_0_S))
     {
     	Drv_I2C_Master_IRQ_Handler(&xHigherPriorityTaskWoken);
-        EPIC->CLEAR = (0b1) << EPIC_I2C_1_INDEX;
+        EPIC->CLEAR = (0b1) << EPIC_I2C_0_INDEX;
     }
 
     if (EPIC->RAW_STATUS & EPIC_LINE_M(EPIC_LINE_I2C_1_S))
@@ -152,13 +166,13 @@ void ext_trap_handler(void)
     if (EPIC->RAW_STATUS & EPIC_LINE_M(EPIC_LINE_UART_0_S))
     {
     	Bsp_UartTransport_Uart_IRQHandler_If(&xHigherPriorityTaskWoken);
-    	EPIC->CLEAR = (0b1)<<EPIC_UART_1_INDEX;
+    	EPIC->CLEAR = (0b1) << EPIC_UART_0_INDEX;
     }
 
     if(EPIC->RAW_STATUS & EPIC_LINE_M(EPIC_LINE_DMA_S))
     {
     	Bsp_UartTransport_DMA_IRQHandler_If();
-    	EPIC->CLEAR = (0b1)<<EPIC_DMA_INDEX;
+    	EPIC->CLEAR = (0b1) << EPIC_DMA_INDEX;
     }
 
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);

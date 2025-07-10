@@ -8,16 +8,12 @@
 #ifndef INC_APP_H_
 #define INC_APP_H_
 
-#include "wdt_driver.h"
-#include "BspLedsController_If.h"
-#include "BspUartTransport_If.h"
-#include "i2c_driver_master.h"
-
 
 #include "FreeRTOS.h"
 #include "task.h"
 
 #include <string.h>
+#include <stdbool.h>
 
 
 /**

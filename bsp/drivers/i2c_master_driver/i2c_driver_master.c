@@ -66,9 +66,11 @@ static void I2C_StartTransaction(void);
 static void I2C_RecoverBus(void);
 
 // Инициализация драйвера
-void Drv_I2C_Master_Init(void) {
+void Drv_I2C_Master_Init(void)
+{
     xI2C_Queue = xQueueCreate(1, sizeof(I2C_Master_Transaction_t*)); // Очередь на 1 транзакцию
-    xTaskCreate(I2C_Task, "I2C", configMINIMAL_STACK_SIZE*2, NULL, 2, NULL); // Создаем задачу
+
+    xTaskCreate(I2C_Task, "I2C", configMINIMAL_STACK_SIZE*2, NULL, tskIDLE_PRIORITY + 2, NULL); // Создаем задачу
 
     PM->CLK_APB_P_SET = DRV_I2C_MASTER_PM_CLOCK_APB_P;
 
@@ -112,9 +114,8 @@ void Drv_I2C_Master_Init(void) {
 
     hi2c->TIMINGR |= I2C_TIMINGR_SCLDEL(4);
     hi2c->TIMINGR |= I2C_TIMINGR_SDADEL(4);
-    hi2c->TIMINGR |= I2C_TIMINGR_SCLH(80); //80
-    hi2c->TIMINGR |= I2C_TIMINGR_SCLL(80); //80
-
+    hi2c->TIMINGR |= I2C_TIMINGR_SCLH(16); //16 - 400кГц / 78 - 100кГц
+    hi2c->TIMINGR |= I2C_TIMINGR_SCLL(16); //16 - 400кГц / 78 - 100кГц
 
     /* Растягивание. В режиме Master должно быть 0 */
     hi2c->CR1 &= ~I2C_CR1_NOSTRETCH_M;
@@ -144,27 +145,29 @@ bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t 
     switch (trans->opMode)
     {
         case I2C_OP_WRITE_THEN_READ:
-            if (trans->command == NULL || trans->data == NULL ||
-                trans->commandLen == 0 || trans->commandLen > 16 ||
-                trans->dataLen == 0)
+            if (trans->writeData == NULL || trans->readData == NULL ||
+                trans->writeDataLen == 0 || trans->writeDataLen > I2C_WRITE_DATA_MAX_LEN ||
+                trans->readDataLen == 0 || trans->readDataLen > I2C_READ_DATA_MAX_LEN)
             {
                 return false;
             }
             break;
 
         case I2C_OP_WRITE_ONLY:
-            if (trans->command == NULL || trans->commandLen == 0 || trans->commandLen > 16)
+            if (trans->writeData == NULL || trans->writeDataLen == 0 ||
+                trans->writeDataLen > I2C_WRITE_DATA_MAX_LEN)
             {
                 return false;
             }
             break;
 
         case I2C_OP_READ_ONLY:
-            if (trans->data == NULL || trans->dataLen == 0)
+            if (trans->readData == NULL || trans->readDataLen == 0 ||
+                trans->readDataLen > I2C_READ_DATA_MAX_LEN)
             {
                 return false;
             }
-            if (trans->command != NULL)
+            if (trans->writeData != NULL)
             {
                 return false;
             }
@@ -192,7 +195,8 @@ bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t 
 // Задача FreeRTOS для обработки транзакций
 static void I2C_Task(void *pvParameters)
 {
-    while (1) {
+    while (1)
+    {
         if (xQueueReceive(xI2C_Queue, &currentTrans, portMAX_DELAY) == pdTRUE)
         {
             // Проверка флага BUSY перед началом транзакции
@@ -234,20 +238,20 @@ static void I2C_StartTransaction(void)
     {
         case I2C_OP_WRITE_THEN_READ:
             hi2c->CR2 = (currentTrans->devAddr << 1) |
-                        I2C_CR2_NBYTES(currentTrans->commandLen) |
+                        I2C_CR2_NBYTES(currentTrans->writeDataLen) |
                         I2C_CR2_START_M;
             break;
 
         case I2C_OP_WRITE_ONLY:
             hi2c->CR2 = (currentTrans->devAddr << 1) |
-                        I2C_CR2_NBYTES(currentTrans->commandLen) |
+                        I2C_CR2_NBYTES(currentTrans->writeDataLen) |
                         I2C_CR2_START_M |
                         I2C_CR2_AUTOEND_M;
             break;
 
         case I2C_OP_READ_ONLY:
             hi2c->CR2 = (currentTrans->devAddr << 1) |
-                        I2C_CR2_NBYTES(currentTrans->dataLen) |
+                        I2C_CR2_NBYTES(currentTrans->readDataLen) |
                         I2C_CR2_START_M |
                         I2C_CR2_RD_WRN_M |
                         I2C_CR2_AUTOEND_M;
@@ -258,9 +262,21 @@ static void I2C_StartTransaction(void)
 
 static void I2C_RecoverBus(void)
 {
-    // Полный сброс I2C периферии
+    // 1. Выключаем I2C периферию
     hi2c->CR1 &= ~I2C_CR1_PE_M;
+
+    // 2. Ждем минимум 3 такта APB шины для гарантированного сброса
+    // (вставляем небольшую задержку)
+    volatile uint32_t delay = 10; // ~10 тактов при 0 wait states
+    while(delay--);
+
+    // 3. Включаем I2C обратно
     hi2c->CR1 |= I2C_CR1_PE_M;
+
+    // 4. Дополнительно: сбрасываем все флаги ошибок
+    hi2c->ICR = I2C_ICR_OVRCF_M | I2C_ICR_ARLOCF_M |
+                I2C_ICR_BERRCF_M | I2C_ICR_STOPCF_M |
+                I2C_ICR_NACKCF_M | I2C_ICR_ADDRCF_M;
 }
 
 
@@ -288,23 +304,23 @@ void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
 		switch (currentTrans->opMode)
 		{
 			case I2C_OP_WRITE_THEN_READ:
-				if ((isr & I2C_ISR_TXIS_M) && (i2cState.cmdPos < currentTrans->commandLen) && !i2cState.isReading)
+				if ((isr & I2C_ISR_TXIS_M) && (i2cState.cmdPos < currentTrans->writeDataLen) && !i2cState.isReading)
 				{
-					hi2c->TXDR = currentTrans->command[i2cState.cmdPos++];
+					hi2c->TXDR = currentTrans->writeData[i2cState.cmdPos++];
 				}
 
-				if ((isr & I2C_ISR_TC_M) && (i2cState.cmdPos == currentTrans->commandLen) && !i2cState.isReading)
+				if ((isr & I2C_ISR_TC_M) && (i2cState.cmdPos == currentTrans->writeDataLen) && !i2cState.isReading)
 				{
 					hi2c->CR2 &= ~(I2C_CR2_NBYTES_M | I2C_CR2_RD_WRN_M | I2C_CR2_AUTOEND_M);  // Сброс управляющих битов
 
 					i2cState.isReading = true;  // Переход в фазу чтения
 					hi2c->CR2 = (currentTrans->devAddr << 1) |
-								I2C_CR2_NBYTES(currentTrans->dataLen) |
+								I2C_CR2_NBYTES(currentTrans->readDataLen) |
 								I2C_CR2_START_M |
 								I2C_CR2_RD_WRN_M;
 				}
 
-				if ((isr & I2C_ISR_TC_M) && (i2cState.dataPos == currentTrans->dataLen) && i2cState.isReading )
+				if ((isr & I2C_ISR_TC_M) && (i2cState.dataPos == currentTrans->readDataLen) && i2cState.isReading )
 				{
 					hi2c->CR2 |= I2C_CR2_STOP_M; // Явный STOP
 					currentTrans->result = true;
@@ -315,13 +331,13 @@ void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
 			case I2C_OP_WRITE_ONLY:
 				if (isr & I2C_ISR_TXIS_M)
 				{
-					if (i2cState.cmdPos < currentTrans->commandLen)
+					if (i2cState.cmdPos < currentTrans->writeDataLen)
 					{
-						hi2c->TXDR = currentTrans->command[i2cState.cmdPos++];
+						hi2c->TXDR = currentTrans->writeData[i2cState.cmdPos++];
 					}
 				}
 
-				if ((isr & I2C_ISR_TC_M) && (i2cState.cmdPos == currentTrans->commandLen))
+				if ((isr & I2C_ISR_TC_M) && (i2cState.cmdPos == currentTrans->writeDataLen))
 				{
 					//hi2c->CR2 |= I2C_CR2_STOP_M; // Явный STOP
 					currentTrans->result = true;
@@ -330,7 +346,7 @@ void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
 				break;
 
 			case I2C_OP_READ_ONLY:
-				if ((isr & I2C_ISR_TC_M) && (i2cState.dataPos == currentTrans->dataLen))
+				if ((isr & I2C_ISR_TC_M) && (i2cState.dataPos == currentTrans->readDataLen))
 				{
 					//hi2c->CR2 |= I2C_CR2_STOP_M; // Явный STOP
 					currentTrans->result = true;
@@ -341,9 +357,9 @@ void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
 		// Общая обработка приема данных
 		if (isr & I2C_ISR_RXNE_M)
 		{
-		    if (i2cState.dataPos < currentTrans->dataLen)
+		    if (i2cState.dataPos < currentTrans->readDataLen)
 		    {
-		        currentTrans->data[i2cState.dataPos++] = hi2c->RXDR;
+		        currentTrans->readData[i2cState.dataPos++] = hi2c->RXDR;
 		    }
 		}
 	}
