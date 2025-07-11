@@ -63,48 +63,37 @@ void UART_Protocol_Init(uint32_t i2c_timeout_ms)
     }
 }
 
-static bool I2C_Transaction(uint8_t devAddr, uint16_t command, uint8_t cmdLen,
-                          const uint8_t *writeData, uint8_t writeLen,
-                          uint8_t *readData, uint8_t readLen)
+static bool I2C_Transaction(uint8_t devAddr, const uint8_t *writeData, uint8_t writeLen, uint8_t *readData, uint8_t readLen)
 {
     I2C_Master_Transaction_t trans = {0};
     bool result = false;
 
-    // Если есть данные для записи, предполагаем, что первые 2 байта - это команда
-    if (writeLen > 0 && writeData != NULL)
-    {
-        trans.writeData = (uint8_t *)writeData - 2; // Смещаем указатель на 2 байта назад
-        trans.writeDataLen = writeLen + 2;
-    }
-    else
-    {
-        // Если данных нет, передаем только команду
-        uint8_t cmd[2] = {command & 0xFF, (command >> 8) & 0xFF};
-        trans.writeData = cmd;
-        trans.writeDataLen = 2;
-    }
-
+    // Настройка адреса и семафора
     trans.devAddr = devAddr;
-    trans.readData = readData;
-    trans.readDataLen = readLen;
     trans.completionSem = xI2CSemaphore;
 
-    // Определяем режим операции
+    // Условная "команда" — это просто первые 2 байта в буфере writeData
+    // Если writeData != NULL, предполагаем, что он УЖЕ содержит команду в первых 2 байтах
+    trans.writeData = (uint8_t *)writeData;  // Безопасное приведение типа
+    trans.writeDataLen = writeLen;
+
+    // Настройка чтения (если нужно)
+    trans.readData = readData;
+    trans.readDataLen = readLen;
+
+    // Определение режима операции
     if (writeLen > 0 && readLen > 0) {
         trans.opMode = I2C_OP_WRITE_THEN_READ;
-    }
-    else if (writeLen > 0) {
+    } else if (writeLen > 0) {
         trans.opMode = I2C_OP_WRITE_ONLY;
-    }
-    else if (readLen > 0) {
+    } else if (readLen > 0) {
         trans.opMode = I2C_OP_READ_ONLY;
-    }
-    else {
-        trans.opMode = I2C_OP_WRITE_ONLY;
+    } else {
+        return false;  // Ничего не делаем
     }
 
-    if (xSemaphoreTake(xI2CSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
-    {
+    // Захват семафора и выполнение транзакции
+    if (xSemaphoreTake(xI2CSemaphore, pdMS_TO_TICKS(100))) {
         result = Drv_I2C_Master_SendTransaction(&trans, pdMS_TO_TICKS(100));
         xSemaphoreGive(xI2CSemaphore);
     }
@@ -125,57 +114,44 @@ bool UART_Protocol_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_U
     tx_msg->payload[0] = packet_id;
     tx_msg->payload[1] = cmd;
 
+    bool result;
     switch (cmd)
     {
 		case CMD_I2C_WRITE:
-			// Проверяем минимальную длину: PacketID + CMD + SA + I2C_CMD(2) + WRITE_LEN = 7 байт
-			if (rx_msg->payload_len < 6) return false;
+			// Проверяем длину: PacketID(1) + CMD(1) + SA(1) + I2C_CMD(2) + WRITE_LEN(1) + данные(N)
+			if (rx_msg->payload_len < 6 || rx_msg->payload_len != 6 + rx_msg->payload[5])
+				return false;
 
-			{
-				uint8_t devAddr = rx_msg->payload[2];
-				uint16_t i2cCmd = rx_msg->payload[3] | (rx_msg->payload[4] << 8);
-				uint8_t writeLen = rx_msg->payload[5];
+			// Передаем: [SA][I2C_CMD][DATA] (все уже в rx_msg->payload[2..])
+			result = I2C_Transaction(
+				rx_msg->payload[2],       // devAddr (SA)
+				&rx_msg->payload[3],      // writeData (I2C_CMD + данные)
+				2 + rx_msg->payload[5],   // writeLen (2 байта команды + данные)
+				NULL,                     // readData
+				0                         // readLen
+			);
 
-				// Проверяем что длина данных соответствует заявленной
-				if (rx_msg->payload_len != 6 + writeLen) return false;
-
-				// Выполняем запись
-				bool result = I2C_Transaction(devAddr, i2cCmd, 2,
-											&rx_msg->payload[6], writeLen,
-											NULL, 0);
-
-				tx_msg->payload[2] = result ? STATUS_OK : STATUS_ERROR;
-				tx_msg->payload_len = 3;
-				return true;
-			}
+			tx_msg->payload[2] = result ? STATUS_OK : STATUS_ERROR;
+			tx_msg->payload_len = 3;
+			break;
 
 		case CMD_I2C_WRITE_THEN_READ:
-			// Проверяем длину: PacketID + CMD + SA + I2C_CMD(2) + READ_LEN = 6 байт
-			if (rx_msg->payload_len != 6) return false;
+		    // Проверяем длину: PacketID(1) + CMD(1) + SA(1) + I2C_CMD(2) + READ_LEN(1)
+		    if (rx_msg->payload_len != 6)
+		        return false;
 
-			{
-				uint8_t devAddr = rx_msg->payload[2];
-				uint16_t i2cCmd = rx_msg->payload[3] | (rx_msg->payload[4] << 8);
-				uint8_t readLen = rx_msg->payload[5];
+		    // Передаем: [SA][I2C_CMD], затем читаем
+		    result = I2C_Transaction(
+		        rx_msg->payload[2],       // devAddr (SA)
+		        &rx_msg->payload[3],      // writeData (I2C_CMD)
+		        2,                        // writeLen (только 2 байта команды)
+		        &tx_msg->payload[3],      // readData (куда писать результат)
+		        rx_msg->payload[5]        // readLen
+		    );
 
-				// Выполняем запись+чтение
-				tx_msg->payload[2] = STATUS_OK; // Предварительно ставим OK
-				bool result = I2C_Transaction(devAddr, i2cCmd, 2,
-											NULL, 0,
-											&tx_msg->payload[3], readLen);
-
-				if (result)
-				{
-					tx_msg->payload[2] = STATUS_OK;
-					tx_msg->payload_len = 3 + readLen;
-				}
-				else
-				{
-					tx_msg->payload[2] = STATUS_ERROR;
-					tx_msg->payload_len = 3;
-				}
-				return true;
-			}
+		    tx_msg->payload[2] = result ? STATUS_OK : STATUS_ERROR;
+		    tx_msg->payload_len = result ? (3 + rx_msg->payload[5]) : 3;
+		    break;
 
         case CMD_GPIO_READ:
             // Проверяем длину данных: PacketID + CMD + PIN = 3 байта
