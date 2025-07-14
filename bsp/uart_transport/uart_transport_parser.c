@@ -21,7 +21,6 @@ static UartParserContext_t parser_ctx;
 #if UART_TRANSPORT_CRC_ENABLED
 static inline uint8_t Calculate_crc(uint8_t current_crc, uint8_t new_byte)
 {
-    // Пример CRC-8 (Dallas/Maxim)
     uint8_t crc = current_crc ^ new_byte;
     for(uint8_t i = 0; i < 8; i++)
     {

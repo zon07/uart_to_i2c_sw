@@ -70,7 +70,6 @@ void main()
     /* BSP Инициализация I2C */
     Drv_I2C_Master_Init();
 
-
     /* BSP Инициализация Uart */
     if(Bsp_UartTransport_Init_If(9600) == false)
     {

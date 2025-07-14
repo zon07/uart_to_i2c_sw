@@ -38,6 +38,9 @@ bool App_Init(void)
 
     i2c_sem = xSemaphoreCreateBinary();
 
+    /* Инициализация протокола UART-I2C */
+    UART_Protocol_Init(100);
+
     return true;
 }
 
@@ -73,10 +76,8 @@ void vAppTask(void *pvParameters)
 
 		if (Bsp_UartTransportReceive_If(&uartRxMsg))
 		{
-			if (UART_Protocol_HandleCommand(&uartRxMsg, &uartTxMsg))
-			{
-				Bsp_UartTransportTransmit_If(&uartTxMsg);
-			}
+			UART_Protocol_HandleCommand(&uartRxMsg, &uartTxMsg);
+			Bsp_UartTransportTransmit_If(&uartTxMsg);
 		}
 
 
@@ -91,7 +92,7 @@ void vAppTask(void *pvParameters)
         if ((xTaskGetTickCount() - xLastWakeTime1000ms) >= pdMS_TO_TICKS(1000))
         {
         	xLastWakeTime1000ms = xTaskGetTickCount();
-            bool result = Drv_I2C_Master_SendTransaction(&trans, pdMS_TO_TICKS(100));
+            //bool result = Drv_I2C_Master_SendTransaction(&trans, pdMS_TO_TICKS(100));
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
