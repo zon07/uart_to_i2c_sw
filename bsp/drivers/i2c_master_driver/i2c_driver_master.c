@@ -96,7 +96,7 @@ void Drv_I2C_Master_Init(void)
      * 1 - включить;
      * */
     hi2c->CR1 &= ~I2C_CR1_ANFOFF_M;
-    hi2c->CR1 |= (0 << I2C_CR1_ANFOFF_S);
+    hi2c->CR1 |= (1 << I2C_CR1_ANFOFF_S);
 
     /* Цифровой фильтр
      * 0b0000 - выключен,
@@ -114,8 +114,8 @@ void Drv_I2C_Master_Init(void)
 
     hi2c->TIMINGR |= I2C_TIMINGR_SCLDEL(12);
     hi2c->TIMINGR |= I2C_TIMINGR_SDADEL(10);
-    hi2c->TIMINGR |= I2C_TIMINGR_SCLH(19);
-    hi2c->TIMINGR |= I2C_TIMINGR_SCLL(59);
+    hi2c->TIMINGR |= I2C_TIMINGR_SCLH(29);
+    hi2c->TIMINGR |= I2C_TIMINGR_SCLL(29);
 
     /* Растягивание. В режиме Master должно быть 0 */
     hi2c->CR1 &= ~I2C_CR1_NOSTRETCH_M;
