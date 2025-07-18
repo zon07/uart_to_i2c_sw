@@ -114,8 +114,8 @@ void Drv_I2C_Master_Init(void)
 
     hi2c->TIMINGR |= I2C_TIMINGR_SCLDEL(12);
     hi2c->TIMINGR |= I2C_TIMINGR_SDADEL(10);
-    hi2c->TIMINGR |= I2C_TIMINGR_SCLH(29);
-    hi2c->TIMINGR |= I2C_TIMINGR_SCLL(29);
+    hi2c->TIMINGR |= I2C_TIMINGR_SCLH(27);
+    hi2c->TIMINGR |= I2C_TIMINGR_SCLL(27);
 
     /* Растягивание. В режиме Master должно быть 0 */
     hi2c->CR1 &= ~I2C_CR1_NOSTRETCH_M;
@@ -245,8 +245,8 @@ static void I2C_StartTransaction(void)
         case I2C_OP_WRITE_ONLY:
             hi2c->CR2 = (currentTrans->devAddr << 1) |
                         I2C_CR2_NBYTES(currentTrans->writeDataLen) |
-                        I2C_CR2_START_M |
-                        I2C_CR2_AUTOEND_M;
+                        I2C_CR2_START_M;
+            			// |I2C_CR2_AUTOEND_M;
             break;
 
         case I2C_OP_READ_ONLY:
@@ -337,11 +337,14 @@ void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
 					}
 				}
 
-				if ((isr & I2C_ISR_TC_M) && (i2cState.cmdPos == currentTrans->writeDataLen))
+				if ((isr & I2C_ISR_TC_M) )
 				{
-					//hi2c->CR2 |= I2C_CR2_STOP_M; // Явный STOP
-					currentTrans->result = true;
-					transactionComplete = true;
+					if(true && (i2cState.cmdPos == currentTrans->writeDataLen))
+					{
+						hi2c->CR2 |= I2C_CR2_STOP_M; // Явный STOP
+						currentTrans->result = true;
+						transactionComplete = true;
+					}
 				}
 				break;
 
