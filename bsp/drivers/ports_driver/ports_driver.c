@@ -94,7 +94,7 @@ bool Bsp_PrstPort_Read_If(void)
 {
     bool state;
     taskENTER_CRITICAL();
-    state = !((GPIO_0->STATE >> PRSNT_N_PIN) & 0x1);
+    state = (GPIO_0->STATE >> PRSNT_N_PIN) & 0x1;
     taskEXIT_CRITICAL();
     return state;
 }
@@ -103,7 +103,7 @@ bool Bsp_VD2_Read_If(void)
 {
     bool state;
     taskENTER_CRITICAL();
-    state = !((GPIO_1->STATE >> VD2_PIN) & 0x1);
+    state = (GPIO_1->STATE >> VD2_PIN) & 0x1;
     taskEXIT_CRITICAL();
     return state;
 }
@@ -113,7 +113,7 @@ bool Bsp_PwrOnPort_Read_If(void)
 {
     bool state;
     taskENTER_CRITICAL();
-    state = !((GPIO_0->STATE >> PWR_ON_PIN) & 0x1);
+    state = (GPIO_0->STATE >> PWR_ON_PIN) & 0x1;
     taskEXIT_CRITICAL();
     return state;
 }
