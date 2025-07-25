@@ -187,12 +187,16 @@ bool UART_Protocol_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_U
                         tx_msg->payload_len = 4;
                         break;
                     case 1: // Bsp_VD2
-                        tx_msg->payload[2] = STATUS_ERROR;
-                        tx_msg->payload_len = 3;
+                    	pin_state = Bsp_VD2_Read_If();
+                        tx_msg->payload[2] = STATUS_OK;
+                        tx_msg->payload[3] = pin_state ? 1 : 0;
+                        tx_msg->payload_len = 4;
                         return false;
                     case 2: // Bsp_PwrOnPort
-                        tx_msg->payload[2] = STATUS_ERROR;
-                        tx_msg->payload_len = 3;
+                    	pin_state = Bsp_PwrOnPort_Read_If();
+                        tx_msg->payload[2] = STATUS_OK;
+                        tx_msg->payload[3] = pin_state ? 1 : 0;
+                        tx_msg->payload_len = 4;
                         return false;
                     default:
                         tx_msg->payload[2] = STATUS_ERROR;

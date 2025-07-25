@@ -24,6 +24,8 @@ void Bsp_PwrOnPort_On_If(void);
 void Bsp_PwrOnPort_Off_If(void);
 
 bool Bsp_PrstPort_Read_If(void);
+bool Bsp_VD2_Read_If(void);
+bool Bsp_PwrOnPort_Read_If(void);
 
 
 #endif /* DRIVERS_PORTS_DRIVER_PORTS_DRIVER_H_ */
