@@ -22,6 +22,7 @@
 #include "ports_driver.h"
 #include "BspUartTransport_If.h"
 #include "i2c_driver_master.h"
+#include "wdt_driver.h"
 
 extern unsigned long __TEXT_START__;
 
@@ -82,6 +83,12 @@ void main()
     	Error_handler();
     }
 
+    if(!WDT_Init())
+    {
+    	Error_handler();
+    }
+    WDT_Reset();
+
     // Запуск планировщика FreeRTOS
     vTaskStartScheduler();
 
@@ -94,7 +101,8 @@ void WDT_Task(void *pvParameters)
 {
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(100));
+    	WDT_Reset();
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 

@@ -8,6 +8,8 @@
 #include "app.h"
 #include "uart_to_i2c_protocol.h"
 #include "i2c_driver_master.h"
+#include "wdt_driver.h"
+#include "ports_driver.h"
 
 
 #define SLAVE_ADDRESS 0x40    // Адрес слейва (7-битный)
@@ -47,28 +49,16 @@ bool App_Init(void)
 
 void vAppTask(void *pvParameters)
 {
+	if (WDT_CheckResetFlag())
+	{
+		Bsp_VD2_On_If();
+	}
+
     TickType_t xLastWakeTime100ms = xTaskGetTickCount();
     TickType_t xLastWakeTime1000ms = xTaskGetTickCount();
 
     BSP_UartTransportMessage_t uartTxMsg;
     BSP_UartTransportMessage_t uartRxMsg;
-
-    uint16_t index = 0;
-    uint16_t command = COMMAND_GET_SNS_TYPES;
-    uint8_t cmd[2] = {command >> 8, command & 0xFF};
-
-    uint8_t i2c_rxBuff[255] = {0};
-
-    I2C_Master_Transaction_t trans = {
-        .devAddr = SLAVE_ADDRESS,
-        .opMode = I2C_OP_WRITE_THEN_READ,
-        .writeData = cmd,
-        .writeDataLen = 2,
-        .readData = i2c_rxBuff,
-        .readDataLen = COMMAND_GET_SNS_TYPES_DATA_SIZE,
-        .completionSem = i2c_sem,
-        .result = false
-    };
 
     while (1)
     {
@@ -80,19 +70,32 @@ void vAppTask(void *pvParameters)
 			Bsp_UartTransportTransmit_If(&uartTxMsg);
 		}
 
-
         // Обработка 100мс интервала
         if ((xTaskGetTickCount() - xLastWakeTime100ms) >= pdMS_TO_TICKS(100))
         {
+            if(!Bsp_UserBtn_Read_If())
+            {
+            	while(1)
+            	{
+            		taskENTER_CRITICAL();
+            	}
+            }
         	xLastWakeTime100ms = xTaskGetTickCount();
-
         }
 
         // Обработка 1000мс интервала
         if ((xTaskGetTickCount() - xLastWakeTime1000ms) >= pdMS_TO_TICKS(1000))
         {
+        	if(Bsp_PwrOnPort_Read_If())
+        	{
+        		Bsp_PwrOnPort_Off_If();
+        	}
+        	else
+        	{
+        		Bsp_PwrOnPort_On_If();
+        	}
+
         	xLastWakeTime1000ms = xTaskGetTickCount();
-            //bool result = Drv_I2C_Master_SendTransaction(&trans, pdMS_TO_TICKS(100));
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
