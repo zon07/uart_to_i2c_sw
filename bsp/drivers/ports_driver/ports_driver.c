@@ -54,7 +54,6 @@ bool Bsp_Ports_Init_If(void)
 	PAD_CONFIG->VD2_PAD_CONF_PUPD   &= ~PAD_CONFIG_PIN_M(VD2_PIN); 			// Подтяжки не включаем
 
 	VD2_GPIO->DIRECTION_OUT |= (1 << VD2_PIN);  					// Как выход
-	VD2_GPIO->DIRECTION_IN 	&= ~(1 << VD2_PIN);  					// Отключить вход
 	VD2_GPIO->OUTPUT 		&= ~(1 << VD2_PIN);
 
 	/*Настройка PWR_ON*/
@@ -64,7 +63,6 @@ bool Bsp_Ports_Init_If(void)
 	PAD_CONFIG->PRSNT_N_PAD_CONF_PUPD   &= ~PAD_CONFIG_PIN_M(PWR_ON_PIN); 		// Подтяжки не включаем
 
 	PWR_ON_GPIO->DIRECTION_OUT 	|= (1 << PWR_ON_PIN);  				// Как выход
-	PWR_ON_GPIO->DIRECTION_IN 	&= ~(1 << PWR_ON_PIN);  				// Отключить вход
 	PWR_ON_GPIO->OUTPUT 		&= ~(1 << PWR_ON_PIN);
 
 	/*Настройка PRSNT_N*/
@@ -73,7 +71,6 @@ bool Bsp_Ports_Init_If(void)
 	PAD_CONFIG->PRSNT_N_PAD_CONF_PUPD   &= ~PAD_CONFIG_PIN_M(PRSNT_N_PIN); 		// Подтяжки не включаем
 
 	PRSNT_N_GPIO->DIRECTION_IN 	|= (1 << PRSNT_N_PIN);    			// Как вход
-	PRSNT_N_GPIO->DIRECTION_OUT &= ~(1 << PRSNT_N_PIN);  			// Отключить выход
 
 	/*Настройка USER_BTN_N*/
 	PAD_CONFIG->USER_BTN_N_PAD_CONF_CFG 	&= ~PAD_CONFIG_PIN_M(USER_BTN_N_PIN);	// Функция GPIO
@@ -81,7 +78,6 @@ bool Bsp_Ports_Init_If(void)
 	PAD_CONFIG->USER_BTN_N_PAD_CONF_PUPD 	&= ~PAD_CONFIG_PIN_M(USER_BTN_N_PIN); 	// Подтяжки не включаем
 
 	USER_BTN_N_GPIO->DIRECTION_IN 	|= (1 << USER_BTN_N_PIN);    		// Как вход
-	USER_BTN_N_GPIO->DIRECTION_OUT 	&= ~(1 << USER_BTN_N_PIN);  		// Отключить выход
 
 	return true;
 }

@@ -81,4 +81,8 @@ bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t 
  */
 void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken);
 
+void Drv_I2C_Master_Off();
+
+void Drv_I2C_Master_On();
+
 #endif /* I2C_MASTER_DRIVER_MASTER_H_ */

@@ -66,38 +66,11 @@ void vAppTask(void *pvParameters)
 
 		if (Bsp_UartTransportReceive_If(&uartRxMsg))
 		{
-			UART_Protocol_HandleCommand(&uartRxMsg, &uartTxMsg);
+			UART_Protocol_HandleCommand(&uartRxMsg, &uartTxMsg); // Блокирующая функция
 			Bsp_UartTransportTransmit_If(&uartTxMsg);
 		}
 
-        // Обработка 100мс интервала
-        if ((xTaskGetTickCount() - xLastWakeTime100ms) >= pdMS_TO_TICKS(100))
-        {
-            if(!Bsp_UserBtn_Read_If())
-            {
-            	while(1)
-            	{
-            		taskENTER_CRITICAL();
-            	}
-            }
-        	xLastWakeTime100ms = xTaskGetTickCount();
-        }
-
-        // Обработка 1000мс интервала
-        if ((xTaskGetTickCount() - xLastWakeTime1000ms) >= pdMS_TO_TICKS(1000))
-        {
-        	if(Bsp_PwrOnPort_Read_If())
-        	{
-        		Bsp_PwrOnPort_Off_If();
-        	}
-        	else
-        	{
-        		Bsp_PwrOnPort_On_If();
-        	}
-
-        	xLastWakeTime1000ms = xTaskGetTickCount();
-        }
-
+        WDT_Reset();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

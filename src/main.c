@@ -101,7 +101,7 @@ void WDT_Task(void *pvParameters)
 {
     while (1)
     {
-    	WDT_Reset();
+    	//WDT_Reset();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -167,6 +167,7 @@ void ext_trap_handler(void)
 
     if (EPIC->RAW_STATUS & EPIC_LINE_M(EPIC_LINE_I2C_1_S))
     {
+    	//Drv_I2C_Master_IRQ_Handler(&xHigherPriorityTaskWoken);
         EPIC->CLEAR = (0b1) << EPIC_I2C_1_INDEX;
     }
 

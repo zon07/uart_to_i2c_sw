@@ -191,6 +191,17 @@ bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t 
     return false; // Таймаут
 }
 
+void Drv_I2C_Master_Off()
+{
+    // Включаем I2C
+    hi2c->CR1 |= I2C_CR1_PE_M;
+}
+
+void Drv_I2C_Master_On()
+{
+    // Выключаем I2C
+    hi2c->CR1 &= ~I2C_CR1_PE_M;
+}
 
 // Задача FreeRTOS для обработки транзакций
 static void I2C_Task(void *pvParameters)
