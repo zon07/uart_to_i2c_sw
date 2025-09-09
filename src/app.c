@@ -41,7 +41,7 @@ bool App_Init(void)
     i2c_sem = xSemaphoreCreateBinary();
 
     /* Инициализация протокола UART-I2C */
-    UART_Protocol_Init(100);
+    Uart_to_i2c_Prot_Init(100);
 
     return true;
 }
@@ -66,7 +66,7 @@ void vAppTask(void *pvParameters)
 
 		if (Bsp_UartTransportReceive_If(&uartRxMsg))
 		{
-			UART_Protocol_HandleCommand(&uartRxMsg, &uartTxMsg); // Блокирующая функция
+			Uart_to_i2c_Prot_HandleCommand(&uartRxMsg, &uartTxMsg); // Блокирующая функция
 			Bsp_UartTransportTransmit_If(&uartTxMsg);
 		}
 

@@ -83,10 +83,10 @@ void main()
     	Error_handler();
     }
 
-    if(!WDT_Init())
+/*    if(!WDT_Init())
     {
     	Error_handler();
-    }
+    }*/
     WDT_Reset();
 
     // Запуск планировщика FreeRTOS
@@ -179,6 +179,7 @@ void ext_trap_handler(void)
 
     if(EPIC->RAW_STATUS & EPIC_LINE_M(EPIC_LINE_DMA_S))
     {
+    	Drv_I2C_Master_DMA_IRQ_Handler(&xHigherPriorityTaskWoken);
     	Bsp_UartTransport_DMA_IRQHandler_If();
     	EPIC->CLEAR = (0b1) << EPIC_DMA_INDEX;
     }

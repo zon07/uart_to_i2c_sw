@@ -27,9 +27,9 @@ typedef struct {
 } UART_Protocol_Context_t;
 
 // Инициализация протокола
-void UART_Protocol_Init(uint32_t i2c_timeout_ms);
+void Uart_to_i2c_Prot_Init(uint32_t i2c_timeout_ms);
 
 // Обработчик входящих команд
-bool UART_Protocol_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_UartTransportMessage_t* tx_msg);
+bool Uart_to_i2c_Prot_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_UartTransportMessage_t* tx_msg);
 
 #endif // UART_TO_I2C_PROTOCOL_H

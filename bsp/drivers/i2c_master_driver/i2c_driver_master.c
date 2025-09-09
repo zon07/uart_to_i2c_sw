@@ -1,26 +1,23 @@
-/*
- * i2c_master.c
- *
- *  Created on: 23 июн. 2025 г.
- *      Author: user
- */
+/* i2c_master.c */
 
 #include "i2c_driver_master.h"
-
 #include "mik32_memory_map.h"
 #include "power_manager.h"
 #include "pad_config.h"
 #include "i2c.h"
+#include "dma_config.h"
 #include "epic.h"
+#include <string.h>
 
 /* Выбор канала 0 или 1*/
 #define BSP_I2C_CHANNEL		(0U)
-
 
 // Настройки I2C (аппаратные)
 #if (BSP_I2C_CHANNEL == 0)
     #define DRV_I2C_MASTER_EPIC_LINE    		(EPIC_LINE_I2C_0_S)
 	#define DRV_I2C_MASTER_PM_CLOCK_APB_P 		(PM_CLOCK_APB_P_I2C_0_M)
+
+	#define DRV_I2C_MASTER_DMA_REQUEST			(DMA_I2C_0_INDEX)
 
 	#define DRV_I2C_MASTER_PORT_CFG				(PAD_CONFIG->PORT_0_CFG)
 	#define DRV_I2C_MASTER_PORT_DS				(PAD_CONFIG->PORT_0_DS)
@@ -34,6 +31,8 @@
     #define DRV_I2C_MASTER_EPIC_LINE    		(EPIC_LINE_I2C_1_S)
 	#define DRV_I2C_MASTER_PM_CLOCK_APB_P		(PM_CLOCK_APB_P_I2C_1_M)
 
+	#define DRV_I2C_MASTER_DMA_REQUEST			(DMA_I2C_1_INDEX)
+
 	#define DRV_I2C_MASTER_PORT_CFG				(PAD_CONFIG->PORT_1_CFG)
 	#define DRV_I2C_MASTER_PORT_DS				(PAD_CONFIG->PORT_1_DS)
 	#define DRV_I2C_MASTER_PORT_PUPD			(PAD_CONFIG->PORT_1_PUPD)
@@ -42,8 +41,11 @@
 	#define DRV_I2C_MASTER_SCL_PIN				(13)
 
     static I2C_TypeDef *hi2c = I2C_1;
-
 #endif
+
+
+#define I2C_DMA_RX_CHANNEL         (1U)    // Канал DMA для приема
+#define I2C_DMA_TX_CHANNEL         (2U)    // Канал DMA для передачи
 
 #define I2C_TRANSACTION_TIMEOUT_MS    (100) // Таймаут транзакции в мс
 
@@ -55,69 +57,67 @@ typedef struct {
 	volatile bool    timeout;
 } I2C_TransactionState_t;
 
-// Очередь и текущая транзакция
-static QueueHandle_t xI2C_Queue = NULL;
-static I2C_Master_Transaction_t *currentTrans;
+// Статический указатель на текущую транзакцию
+static I2C_Master_Transaction_t *currentTrans = NULL;
 static I2C_TransactionState_t i2cState = {0};
+static SemaphoreHandle_t i2cMutex = NULL;
+static SemaphoreHandle_t completionSem = NULL;
+
+// DMA буфер
+static uint8_t dma_rx_buffer[I2C_READ_DATA_MAX_LEN];
 
 // Приватные функции
-static void I2C_Task(void *pvParameters);
 static void I2C_StartTransaction(void);
 static void I2C_RecoverBus(void);
+static bool I2C_ValidateTransaction(I2C_Master_Transaction_t *trans);
+static void I2C_DMA_Init(void);
+static bool I2C_StartDmaReceive(uint8_t* buffer, uint16_t length);
+
 
 // Инициализация драйвера
 void Drv_I2C_Master_Init(void)
 {
-    xI2C_Queue = xQueueCreate(1, sizeof(I2C_Master_Transaction_t*)); // Очередь на 1 транзакцию
-
-    xTaskCreate(I2C_Task, "I2C", configMINIMAL_STACK_SIZE*2, NULL, tskIDLE_PRIORITY + 2, NULL); // Создаем задачу
+    // Создаем мьютекс для защиты доступа к I2C
+    i2cMutex = xSemaphoreCreateMutex();
+    completionSem = xSemaphoreCreateBinary();
 
     PM->CLK_APB_P_SET = DRV_I2C_MASTER_PM_CLOCK_APB_P;
 
+    // Конфигурация пинов (остается без изменений)
     DRV_I2C_MASTER_PORT_DS 	&= ~PAD_CONFIG_PIN_M(DRV_I2C_MASTER_SDA_PIN);
-    DRV_I2C_MASTER_PORT_DS   |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SDA_PIN, 0b11); 	// 0b00 – 2мА, 0b01 – 4мА, (0b10, 0b11) – 8мА
+    DRV_I2C_MASTER_PORT_DS   |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SDA_PIN, 0b11);
     DRV_I2C_MASTER_PORT_PUPD &= ~PAD_CONFIG_PIN_M(DRV_I2C_MASTER_SDA_PIN);
-    DRV_I2C_MASTER_PORT_PUPD |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SDA_PIN, 0b00);	// Подтяжка Pull-Up
+    DRV_I2C_MASTER_PORT_PUPD |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SDA_PIN, 0b00);
 
 	DRV_I2C_MASTER_PORT_DS 	&= ~PAD_CONFIG_PIN_M(DRV_I2C_MASTER_SCL_PIN);
-	DRV_I2C_MASTER_PORT_DS   |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SCL_PIN, 0b11); 	// 0b00 – 2мА, 0b01 – 4мА, (0b10, 0b11) – 8мА
+	DRV_I2C_MASTER_PORT_DS   |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SCL_PIN, 0b11);
 	DRV_I2C_MASTER_PORT_PUPD &= ~PAD_CONFIG_PIN_M(DRV_I2C_MASTER_SCL_PIN);
-	DRV_I2C_MASTER_PORT_PUPD |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SCL_PIN, 0b00); 	// Подтяжка Pull-Up
+	DRV_I2C_MASTER_PORT_PUPD |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SCL_PIN, 0b00);
 
 	DRV_I2C_MASTER_PORT_CFG &= ~(PAD_CONFIG_PIN_M(DRV_I2C_MASTER_SDA_PIN) | PAD_CONFIG_PIN_M(DRV_I2C_MASTER_SCL_PIN));
-	DRV_I2C_MASTER_PORT_CFG |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SDA_PIN, 0b01);	// SDA
-	DRV_I2C_MASTER_PORT_CFG |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SCL_PIN, 0b01); 	// SCL
+	DRV_I2C_MASTER_PORT_CFG |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SDA_PIN, 0b01);
+	DRV_I2C_MASTER_PORT_CFG |= PAD_CONFIG_PIN(DRV_I2C_MASTER_SCL_PIN, 0b01);
 
 	/* Выключаем модуль I2C*/
 	hi2c->CR1 &= ~I2C_CR1_PE_M;
 
-    /* Аналоговый фильтр
-     * 0 - выключен,
-     * 1 - включить;
-     * */
+    /* Аналоговый фильтр */
     hi2c->CR1 &= ~I2C_CR1_ANFOFF_M;
     hi2c->CR1 |= (1 << I2C_CR1_ANFOFF_S);
 
-    /* Цифровой фильтр
-     * 0b0000 - выключен,
-     * 0b0001 - 1 такт;
-     * -----
-     * 0b1111 - 15 тактов
-     * */
+    /* Цифровой фильтр */
     hi2c->CR1 &= ~I2C_CR1_DNF_M;
     hi2c->CR1 |= I2C_CR1_DNF(0);
 
     /* Настройка частоты и временных параметров */
     hi2c->TIMINGR = 0;
-
-    hi2c->TIMINGR |= I2C_TIMINGR_PRESC(0); // Делитель 2
-
+    hi2c->TIMINGR |= I2C_TIMINGR_PRESC(0);
     hi2c->TIMINGR |= I2C_TIMINGR_SCLDEL(12);
     hi2c->TIMINGR |= I2C_TIMINGR_SDADEL(10);
     hi2c->TIMINGR |= I2C_TIMINGR_SCLH(27);
     hi2c->TIMINGR |= I2C_TIMINGR_SCLL(27);
 
-    /* Растягивание. В режиме Master должно быть 0 */
+    /* Растягивание */
     hi2c->CR1 &= ~I2C_CR1_NOSTRETCH_M;
 
     /* Включение прерываний*/
@@ -131,13 +131,63 @@ void Drv_I2C_Master_Init(void)
 
     /* Включаем модуль I2C*/
     hi2c->CR1 |= I2C_CR1_PE_M;
+
+    /* Инициализация DMA */
+    I2C_DMA_Init();
 }
 
-
-// Отправка транзакции в очередь
-bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t timeout)
+// Инициализация DMA для I2C
+static void I2C_DMA_Init(void)
 {
-    if (trans == NULL || trans->completionSem == NULL || trans->devAddr > 0x7F)
+    PM->CLK_AHB_SET |= PM_CLOCK_AHB_DMA_M;  // Включить тактирование DMA
+    EPIC->MASK_LEVEL_SET |= EPIC_LINE_M(EPIC_DMA_INDEX);
+}
+
+// Запуск приема через DMA
+static bool I2C_StartDmaReceive(uint8_t* buffer, uint16_t length)
+{
+    if ((DMA_CONFIG->CONFIG_STATUS & DMA_STATUS_READY(I2C_DMA_RX_CHANNEL)) == 0)
+    {
+        return false;  // Канал занят
+    }
+
+    DMA_CHANNEL_TypeDef *dmaChannelInst = &DMA_CONFIG->CHANNELS[I2C_DMA_RX_CHANNEL];
+
+    dmaChannelInst->CFG &= ~DMA_CH_CFG_ENABLE_M;
+
+    // Настройка DMA канала для приема
+    dmaChannelInst->SRC = (uint32_t)&hi2c->RXDR;  // Источник - регистр данных I2C
+    dmaChannelInst->DST = (uint32_t)buffer;       // Приемник - буфер в памяти
+    dmaChannelInst->LEN = length - 1;             // Длина данных
+
+    // Конфигурация канала для приема
+    dmaChannelInst->CFG =
+        DMA_CH_CFG_PRIOR_HIGH_M |                 // Высокий приоритет
+        DMA_CH_CFG_READ_MODE_PERIPHERY_M |        // Чтение из периферии
+        DMA_CH_CFG_WRITE_MODE_MEMORY_M |          // Запись в память
+        DMA_CH_CFG_READ_NO_INCREMENT_M |          // Фиксированный адрес источника
+        DMA_CH_CFG_WRITE_INCREMENT_M |            // Инкремент адреса приемника
+        DMA_CH_CFG_READ_SIZE_BYTE_M |             // Размер чтения - байт
+        DMA_CH_CFG_WRITE_SIZE_BYTE_M |            // Размер записи - байт
+        DMA_CH_CFG_READ_REQUEST(DRV_I2C_MASTER_DMA_REQUEST) |  // Запрос DMA для I2C (чтение)
+        DMA_CH_CFG_WRITE_REQUEST(DRV_I2C_MASTER_DMA_REQUEST) | // Запрос DMA для I2C (запись)
+        DMA_CH_CFG_IRQ_EN_M;                      // Разрешить прерывание канала
+
+    DMA_CONFIG->CONFIG_STATUS =
+        DMA_CONFIG_GLOBAL_IRQ_ENA_M |             // Разрешить глобальные прерывания DMA
+        DMA_CONFIG_CURRENT_VALUE_M;               // Разрешить чтение текущих значений
+
+    // Включаем DMA прием в I2C
+    hi2c->CR1 |= I2C_CR1_RXDMAEN_M;
+
+    dmaChannelInst->CFG |= DMA_CH_CFG_ENABLE_M;
+    return true;
+}
+
+// Валидация транзакции
+static bool I2C_ValidateTransaction(I2C_Master_Transaction_t *trans)
+{
+    if (trans == NULL || trans->devAddr > 0x7F)
     {
         return false;
     }
@@ -177,69 +227,77 @@ bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t 
             return false;
     }
 
-    if (xQueueSend(xI2C_Queue, &trans, timeout) != pdPASS)
+    return true;
+}
+
+// Отправка транзакции (блокирующая)
+bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t timeout)
+{
+    if (!I2C_ValidateTransaction(trans))
     {
-        return false; // Очередь занята
+        return false;
     }
 
-    // Ожидаем завершения (именно из транзакции currentTrans)
-    if (xSemaphoreTake(trans->completionSem, timeout) == pdPASS)
+    // Захватываем мьютекс I2C
+    if (xSemaphoreTake(i2cMutex, timeout) != pdPASS)
     {
-        return trans->result;
+        return false; // Не удалось получить доступ к I2C
     }
 
-    return false; // Таймаут
+    currentTrans = trans;
+    xSemaphoreTake(completionSem, 0); // Сбрасываем семафор завершения
+
+    // Проверка флага BUSY перед началом транзакции
+    if (hi2c->ISR & I2C_ISR_BUSY_M)
+    {
+        I2C_RecoverBus();
+        xSemaphoreGive(completionSem);
+    }
+    else
+    {
+        I2C_StartTransaction();
+    }
+
+    // Ожидаем завершения транзакции
+    bool result = false;
+    if (xSemaphoreTake(completionSem, timeout) == pdPASS)
+    {
+        if (result && (currentTrans->opMode != I2C_OP_WRITE_ONLY))
+        {
+            memcpy(currentTrans->readData, dma_rx_buffer, currentTrans->readDataLen);
+        }
+    }
+    else
+    {
+        // Таймаут - прерываем транзакцию
+        hi2c->CR2 |= I2C_CR2_STOP_M;
+        I2C_RecoverBus();
+        result = false;
+    }
+
+    currentTrans = NULL;
+    xSemaphoreGive(i2cMutex); // Освобождаем мьютекс
+
+    return result;
 }
 
 void Drv_I2C_Master_Off()
 {
-    // Включаем I2C
     hi2c->CR1 |= I2C_CR1_PE_M;
 }
 
 void Drv_I2C_Master_On()
 {
-    // Выключаем I2C
     hi2c->CR1 &= ~I2C_CR1_PE_M;
 }
 
-// Задача FreeRTOS для обработки транзакций
-static void I2C_Task(void *pvParameters)
-{
-    while (1)
-    {
-        if (xQueueReceive(xI2C_Queue, &currentTrans, portMAX_DELAY) == pdTRUE)
-        {
-            // Проверка флага BUSY перед началом транзакции
-            if (hi2c->ISR & I2C_ISR_BUSY_M)
-            {
-                currentTrans->result = false;
-                I2C_RecoverBus();
-                xSemaphoreGive(currentTrans->completionSem);
-                continue;
-            }
-
-            I2C_StartTransaction();
-        }
-    }
-}
-
-// Запуск транзакции (аппаратно-зависимый код)
+// Запуск транзакции
 static void I2C_StartTransaction(void)
 {
-    // Проверка флага BUSY перед началом транзакции
-    if (hi2c->ISR & I2C_ISR_BUSY_M)
-    {
-        currentTrans->result = false;
-        xSemaphoreGive(currentTrans->completionSem);
-        return;
-    }
-
-    i2cState.cmdPos = 0;          // Сброс позиции команды
-    i2cState.dataPos = 0;         // Сброс позиции данных
-    i2cState.isReading = false;   // Сброс фазы чтения
+    i2cState.cmdPos = 0;
+    i2cState.dataPos = 0;
+    i2cState.isReading = false;
     i2cState.startTime = xTaskGetTickCount();
-
 
     hi2c->CR2 &= ~(I2C_CR2_START_M | I2C_CR2_STOP_M | I2C_CR2_RD_WRN_M |
                    I2C_CR2_NBYTES_M | I2C_CR2_AUTOEND_M | I2C_CR2_RELOAD_M |
@@ -257,131 +315,109 @@ static void I2C_StartTransaction(void)
             hi2c->CR2 = (currentTrans->devAddr << 1) |
                         I2C_CR2_NBYTES(currentTrans->writeDataLen) |
                         I2C_CR2_START_M;
-            			// |I2C_CR2_AUTOEND_M;
             break;
 
         case I2C_OP_READ_ONLY:
-            hi2c->CR2 = (currentTrans->devAddr << 1) |
-                        I2C_CR2_NBYTES(currentTrans->readDataLen) |
-                        I2C_CR2_START_M |
-                        I2C_CR2_RD_WRN_M |
-                        I2C_CR2_AUTOEND_M;
+            // Для операций чтения используем DMA
+        	I2C_StartDmaReceive(dma_rx_buffer, currentTrans->readDataLen);
+			hi2c->CR2 = (currentTrans->devAddr << 1) |
+						I2C_CR2_NBYTES(currentTrans->readDataLen) |
+						I2C_CR2_START_M |
+						I2C_CR2_RD_WRN_M |
+						I2C_CR2_AUTOEND_M;
             break;
     }
 }
 
-
 static void I2C_RecoverBus(void)
 {
-    // 1. Выключаем I2C периферию
     hi2c->CR1 &= ~I2C_CR1_PE_M;
-
-    // 2. Ждем минимум 3 такта APB шины для гарантированного сброса
-    // (вставляем небольшую задержку)
-    volatile uint32_t delay = 10; // ~10 тактов при 0 wait states
-    while(delay--);
-
-    // 3. Включаем I2C обратно
     hi2c->CR1 |= I2C_CR1_PE_M;
 
-    // 4. Дополнительно: сбрасываем все флаги ошибок
     hi2c->ICR = I2C_ICR_OVRCF_M | I2C_ICR_ARLOCF_M |
                 I2C_ICR_BERRCF_M | I2C_ICR_STOPCF_M |
                 I2C_ICR_NACKCF_M | I2C_ICR_ADDRCF_M;
 }
 
 
+// Обработчик прерываний DMA
+void Drv_I2C_Master_DMA_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
+{
+    if (DMA_CONFIG->CONFIG_STATUS & (1 << (DMA_STATUS_CHANNEL_IRQ_S + I2C_DMA_RX_CHANNEL)))
+    {
+        DMA_CONFIG->CONFIG_STATUS |= (1 << I2C_DMA_RX_CHANNEL);
+
+        // Выключаем DMA прием в I2C
+        hi2c->CR1 &= ~I2C_CR1_RXDMAEN_M;
+
+        if (currentTrans)
+        {
+            xSemaphoreGiveFromISR(completionSem, pxHigherPriorityTaskWoken);
+        }
+    }
+}
+
+// Обработчик прерываний I2C
 void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
 {
-	uint32_t isr = hi2c->ISR;
-	bool transactionComplete = false;
+    if (currentTrans == NULL) return;
+
+    uint32_t isr = hi2c->ISR;
 
     if ((isr & (I2C_ISR_NACKF_M | I2C_ISR_BERR_M | I2C_ISR_ARLO_M | I2C_ISR_OVR_M)) ||
         (xTaskGetTickCountFromISR() - i2cState.startTime) > pdMS_TO_TICKS(I2C_TRANSACTION_TIMEOUT_MS))
     {
         hi2c->CR2 |= I2C_CR2_STOP_M;
-
         hi2c->ICR = I2C_ICR_NACKCF_M | I2C_ICR_BERRCF_M | I2C_ICR_ARLOCF_M | I2C_ICR_OVRCF_M;
-
         I2C_RecoverBus();
-
-        currentTrans->result = false;
-        transactionComplete = true;
+        //xSemaphoreGiveFromISR(completionSem, pxHigherPriorityTaskWoken);
+        return;
     }
 
-
-	if (!transactionComplete)
+	switch (currentTrans->opMode)
 	{
-		switch (currentTrans->opMode)
-		{
-			case I2C_OP_WRITE_THEN_READ:
-				if ((isr & I2C_ISR_TXIS_M) && (i2cState.cmdPos < currentTrans->writeDataLen) && !i2cState.isReading)
+		case I2C_OP_WRITE_THEN_READ:
+			if ((isr & I2C_ISR_TXIS_M) && (i2cState.cmdPos < currentTrans->writeDataLen) && !i2cState.isReading)
+			{
+				hi2c->TXDR = currentTrans->writeData[i2cState.cmdPos++];
+			}
+
+			if ((isr & I2C_ISR_TC_M) && (i2cState.cmdPos == currentTrans->writeDataLen) && !i2cState.isReading)
+			{
+				hi2c->CR2 &= ~(I2C_CR2_NBYTES_M | I2C_CR2_RD_WRN_M | I2C_CR2_AUTOEND_M);
+				i2cState.isReading = true;
+
+				// Запускаем DMA прием
+				I2C_StartDmaReceive(dma_rx_buffer, currentTrans->readDataLen);
+				hi2c->CR2 = (currentTrans->devAddr << 1) |
+							I2C_CR2_NBYTES(currentTrans->readDataLen) |
+							I2C_CR2_START_M |
+							I2C_CR2_RD_WRN_M |
+							I2C_CR2_AUTOEND_M;
+			}
+			break;
+
+		case I2C_OP_WRITE_ONLY:
+			if (isr & I2C_ISR_TXIS_M)
+			{
+				if (i2cState.cmdPos < currentTrans->writeDataLen)
 				{
 					hi2c->TXDR = currentTrans->writeData[i2cState.cmdPos++];
 				}
+			}
 
-				if ((isr & I2C_ISR_TC_M) && (i2cState.cmdPos == currentTrans->writeDataLen) && !i2cState.isReading)
+			if ((isr & I2C_ISR_TC_M))
+			{
+				if (i2cState.cmdPos == currentTrans->writeDataLen)
 				{
-					hi2c->CR2 &= ~(I2C_CR2_NBYTES_M | I2C_CR2_RD_WRN_M | I2C_CR2_AUTOEND_M);  // Сброс управляющих битов
-
-					i2cState.isReading = true;  // Переход в фазу чтения
-					hi2c->CR2 = (currentTrans->devAddr << 1) |
-								I2C_CR2_NBYTES(currentTrans->readDataLen) |
-								I2C_CR2_START_M |
-								I2C_CR2_RD_WRN_M;
+					hi2c->CR2 |= I2C_CR2_STOP_M;
+					xSemaphoreGiveFromISR(completionSem, pxHigherPriorityTaskWoken);
 				}
+			}
+			break;
 
-				if ((isr & I2C_ISR_TC_M) && (i2cState.dataPos == currentTrans->readDataLen) && i2cState.isReading )
-				{
-					hi2c->CR2 |= I2C_CR2_STOP_M; // Явный STOP
-					currentTrans->result = true;
-					transactionComplete = true;
-				}
-				break;
-
-			case I2C_OP_WRITE_ONLY:
-				if (isr & I2C_ISR_TXIS_M)
-				{
-					if (i2cState.cmdPos < currentTrans->writeDataLen)
-					{
-						hi2c->TXDR = currentTrans->writeData[i2cState.cmdPos++];
-					}
-				}
-
-				if ((isr & I2C_ISR_TC_M) )
-				{
-					if(true && (i2cState.cmdPos == currentTrans->writeDataLen))
-					{
-						hi2c->CR2 |= I2C_CR2_STOP_M; // Явный STOP
-						currentTrans->result = true;
-						transactionComplete = true;
-					}
-				}
-				break;
-
-			case I2C_OP_READ_ONLY:
-				if ((isr & I2C_ISR_TC_M) && (i2cState.dataPos == currentTrans->readDataLen))
-				{
-					//hi2c->CR2 |= I2C_CR2_STOP_M; // Явный STOP
-					currentTrans->result = true;
-					transactionComplete = true;
-				}
-				break;
-		}
-		// Общая обработка приема данных
-		if (isr & I2C_ISR_RXNE_M)
-		{
-		    if (i2cState.dataPos < currentTrans->readDataLen)
-		    {
-		        currentTrans->readData[i2cState.dataPos++] = hi2c->RXDR;
-		    }
-		}
-	}
-
-	// Уведомление о завершении
-	if (transactionComplete)
-	{
-		xSemaphoreGiveFromISR(currentTrans->completionSem, pxHigherPriorityTaskWoken);
+		case I2C_OP_READ_ONLY:
+			// Для READ_ONLY все обрабатывается в DMA, здесь ничего не делаем
+			break;
 	}
 }
-

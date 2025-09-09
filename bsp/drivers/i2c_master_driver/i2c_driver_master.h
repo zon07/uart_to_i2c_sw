@@ -52,8 +52,6 @@ typedef struct {
     uint16_t writeDataLen;
     uint8_t *readData;
     uint16_t readDataLen;
-    SemaphoreHandle_t completionSem;
-    bool result;
 } I2C_Master_Transaction_t;
 
 
@@ -80,6 +78,13 @@ bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t 
  * @details Должен вызываться из соответствующего IRQHandler
  */
 void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken);
+
+/**
+ * @brief Обработчик прерываний I2C DMA
+ * @param pxHigherPriorityTaskWoken Указатель для возврата флага необходимости переключения контекста
+ * @details Должен вызываться из соответствующего IRQHandler
+ */
+void Drv_I2C_Master_DMA_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken);
 
 void Drv_I2C_Master_Off();
 

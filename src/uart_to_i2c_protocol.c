@@ -50,28 +50,59 @@
  * */
 
 static UART_Protocol_Context_t ctx;
-// Статический семафор для I2C транзакций
-static SemaphoreHandle_t xI2CSemaphore = NULL;
 
 // Инициализация протокола
-void UART_Protocol_Init(uint32_t i2c_timeout_ms)
+void Uart_to_i2c_Prot_Init(uint32_t i2c_timeout_ms)
 {
-    if (xI2CSemaphore == NULL)
-    {
-        xI2CSemaphore = xSemaphoreCreateBinary();
-        xSemaphoreGive(xI2CSemaphore);
-    }
     ctx.i2c_timeout_ms = i2c_timeout_ms;
 }
 
+
+/**
+ * @brief Проверяет принятые данные из I2C с ожидаемым шаблоном для отладки
+ * @param received_data Указатель на принятые данные
+ * @param data_len Длина принятых данных
+ * @return true если данные совпадают с шаблоном, иначе false
+ */
+static bool Debug_CheckI2CDataPattern(const uint8_t* received_data, uint16_t data_len)
+{
+    // Ожидаемый шаблон данных
+    static const uint8_t expected_pattern[] = {
+        0x01, 0x04, 0xb1, 0x00, 0x01, 0xb0, 0x00, 0x00,
+        0x81, 0x02, 0x01, 0x69, 0x00, 0x0a, 0x5a, 0x00,
+        0x28, 0xbe, 0x02, 0x03, 0x0b, 0x00, 0x0a, 0x5a,
+        0x00, 0x00, 0x81, 0x03, 0x01, 0x9d, 0x00, 0x0a,
+        0x5a, 0x00, 0x28, 0xbe, 0x03, 0x03, 0xff, 0x00,
+        0x0a, 0x5a, 0x00, 0x00, 0x81
+    };
+
+    const uint16_t expected_len = sizeof(expected_pattern);
+
+    // Проверяем длину данных
+    if (data_len != expected_len)
+    {
+        return false;
+    }
+
+    // Сравниваем каждый байт
+    for (uint16_t i = 0; i < expected_len; i++)
+    {
+        if (received_data[i] != expected_pattern[i])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
 static bool I2C_Transaction(uint8_t devAddr, const uint8_t *writeData, uint8_t writeLen, uint8_t *readData, uint8_t readLen)
 {
-    I2C_Master_Transaction_t trans = {0};
-    bool result = false;
+	static I2C_Master_Transaction_t trans;
 
     // Настройка адреса и семафора
     trans.devAddr = devAddr;
-    trans.completionSem = xI2CSemaphore;
 
     // Условная "команда" — это просто первые 2 байта в буфере writeData
 
@@ -100,17 +131,10 @@ static bool I2C_Transaction(uint8_t devAddr, const uint8_t *writeData, uint8_t w
         return false;  // Ничего не делаем
     }
 
-    // Захват семафора и выполнение транзакции
-    if (xSemaphoreTake(xI2CSemaphore, pdMS_TO_TICKS(100)))
-    {
-        result = Drv_I2C_Master_SendTransaction(&trans, pdMS_TO_TICKS(ctx.i2c_timeout_ms));
-        xSemaphoreGive(xI2CSemaphore);
-    }
-
-    return result;
+    return Drv_I2C_Master_SendTransaction(&trans, pdMS_TO_TICKS(ctx.i2c_timeout_ms));
 }
 
-bool UART_Protocol_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_UartTransportMessage_t* tx_msg)
+bool Uart_to_i2c_Prot_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_UartTransportMessage_t* tx_msg)
 {
     if (rx_msg->payload_len < 2)
     {
@@ -123,7 +147,8 @@ bool UART_Protocol_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_U
     tx_msg->payload[0] = packet_id;
     tx_msg->payload[1] = cmd;
 
-    bool result;
+
+    volatile bool result;
     switch (cmd)
     {
 		case CMD_I2C_WRITE:
@@ -168,6 +193,17 @@ bool UART_Protocol_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_U
 		        rx_msg->payload[3]        // readLen (I2C_DATA_LEN)
 		    );
 
+		    // Добавляем проверку для отладки
+		    if (result)
+		    {
+		    	volatile uint8_t tmp = 0x05;
+		        bool pattern_match = Debug_CheckI2CDataPattern(&tx_msg->payload[3], rx_msg->payload[3]);
+		        if (!pattern_match)
+		        {
+		        	tmp = 0xFF;
+		        }
+		    }
+
 		    tx_msg->payload[2] = result ? STATUS_OK : STATUS_ERROR;
 		    tx_msg->payload_len = result ? (3 + rx_msg->payload[3]) : 3;
 		    return result;
@@ -191,19 +227,19 @@ bool UART_Protocol_HandleCommand(const BSP_UartTransportMessage_t* rx_msg, BSP_U
                         tx_msg->payload[2] = STATUS_OK;
                         tx_msg->payload[3] = pin_state ? 1 : 0;
                         tx_msg->payload_len = 4;
-                        return false;
+                        break;
                     case 2: // Bsp_PwrOnPort
                     	pin_state = Bsp_PwrOnPort_Read_If();
                         tx_msg->payload[2] = STATUS_OK;
                         tx_msg->payload[3] = pin_state ? 1 : 0;
                         tx_msg->payload_len = 4;
-                        return false;
+                        break;
                     case 3: // Bsp_UserBtn
                     	pin_state = Bsp_UserBtn_Read_If();
                         tx_msg->payload[2] = STATUS_OK;
                         tx_msg->payload[3] = pin_state ? 1 : 0;
                         tx_msg->payload_len = 4;
-                        return false;
+                        break;
                     default:
                         tx_msg->payload[2] = STATUS_ERROR;
                         tx_msg->payload_len = 3;
