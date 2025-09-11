@@ -50,12 +50,6 @@ void main()
 	write_csr(mtvec, &__TEXT_START__);
 	SystemClock_Config();
 
-    /* Создаем задачу watchdog */
-    if(xTaskCreate(WDT_Task, "WDT", configMINIMAL_STACK_SIZE/2, NULL, configMAX_PRIORITIES - 1, NULL) != pdPASS)
-    {
-    	Error_handler();
-    }
-
     /* Создаем задачу монитора остатка HEAP */
     if(xTaskCreate(vTaskCheckHeap, "HeapMonitor", configMINIMAL_STACK_SIZE/2, NULL, tskIDLE_PRIORITY, NULL) != pdPASS)
     {
@@ -87,7 +81,7 @@ void main()
     {
     	Error_handler();
     }*/
-    WDT_Reset();
+    //WDT_Reset();
 
     // Запуск планировщика FreeRTOS
     vTaskStartScheduler();
@@ -97,16 +91,6 @@ void main()
 
 
 /*============================ RTOS Tasks ============================*/
-void WDT_Task(void *pvParameters)
-{
-    while (1)
-    {
-    	//WDT_Reset();
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
-
-
 void vTaskCheckHeap(void *pvParameters)
 {
 	volatile size_t freeHeap = 0;

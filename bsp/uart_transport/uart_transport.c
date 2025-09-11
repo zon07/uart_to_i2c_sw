@@ -213,7 +213,7 @@ void Bsp_UartTransport_DMA_IRQHandler_If(void)
 {
     if(DMA_CONFIG->CONFIG_STATUS & (1 << (DMA_STATUS_CHANNEL_IRQ_S + DMA_Channel)))
     {
-        DMA_CONFIG->CONFIG_STATUS |= (1 << DMA_Channel);
+        DMA_CONFIG->CONFIG_STATUS = DMA_CONFIG_CLEAR_LOCAL_IRQ(DMA_Channel) | DMA_CONFIG_CLEAR_GLOBAL_IRQ_M;
 
         dmaState = DMA_STATE_READY;
     }

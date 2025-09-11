@@ -143,6 +143,7 @@ static void I2C_DMA_Init(void)
     EPIC->MASK_LEVEL_SET |= EPIC_LINE_M(EPIC_DMA_INDEX);
 }
 
+
 // Запуск приема через DMA
 static bool I2C_StartDmaReceive(uint8_t* buffer, uint16_t length)
 {
@@ -162,7 +163,7 @@ static bool I2C_StartDmaReceive(uint8_t* buffer, uint16_t length)
 
     // Конфигурация канала для приема
     dmaChannelInst->CFG =
-        DMA_CH_CFG_PRIOR_HIGH_M |                 // Высокий приоритет
+        DMA_CH_CFG_PRIOR_VERY_HIGH_M |                 // Высокий приоритет
         DMA_CH_CFG_READ_MODE_PERIPHERY_M |        // Чтение из периферии
         DMA_CH_CFG_WRITE_MODE_MEMORY_M |          // Запись в память
         DMA_CH_CFG_READ_NO_INCREMENT_M |          // Фиксированный адрес источника
@@ -239,7 +240,7 @@ bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t 
     }
 
     // Захватываем мьютекс I2C
-    if (xSemaphoreTake(i2cMutex, timeout) != pdPASS)
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) != pdPASS)
     {
         return false; // Не удалось получить доступ к I2C
     }
@@ -262,7 +263,8 @@ bool Drv_I2C_Master_SendTransaction(I2C_Master_Transaction_t *trans, TickType_t 
     bool result = false;
     if (xSemaphoreTake(completionSem, timeout) == pdPASS)
     {
-        if (result && (currentTrans->opMode != I2C_OP_WRITE_ONLY))
+        result = true; // Транзакция успешно завершена
+        if (currentTrans->opMode != I2C_OP_WRITE_ONLY)
         {
             memcpy(currentTrans->readData, dma_rx_buffer, currentTrans->readDataLen);
         }
@@ -345,15 +347,15 @@ void Drv_I2C_Master_DMA_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
 {
     if (DMA_CONFIG->CONFIG_STATUS & (1 << (DMA_STATUS_CHANNEL_IRQ_S + I2C_DMA_RX_CHANNEL)))
     {
-        DMA_CONFIG->CONFIG_STATUS |= (1 << I2C_DMA_RX_CHANNEL);
+        DMA_CONFIG->CONFIG_STATUS = DMA_CONFIG_CLEAR_LOCAL_IRQ(I2C_DMA_RX_CHANNEL) | DMA_CONFIG_CLEAR_GLOBAL_IRQ_M;
 
         // Выключаем DMA прием в I2C
         hi2c->CR1 &= ~I2C_CR1_RXDMAEN_M;
 
-        if (currentTrans)
-        {
-            xSemaphoreGiveFromISR(completionSem, pxHigherPriorityTaskWoken);
-        }
+        // Отключаем канал DMA
+        DMA_CONFIG->CHANNELS[I2C_DMA_RX_CHANNEL].CFG &= ~DMA_CH_CFG_ENABLE_M;
+
+        xSemaphoreGiveFromISR(completionSem, pxHigherPriorityTaskWoken);
     }
 }
 
@@ -370,7 +372,7 @@ void Drv_I2C_Master_IRQ_Handler(BaseType_t *pxHigherPriorityTaskWoken)
         hi2c->CR2 |= I2C_CR2_STOP_M;
         hi2c->ICR = I2C_ICR_NACKCF_M | I2C_ICR_BERRCF_M | I2C_ICR_ARLOCF_M | I2C_ICR_OVRCF_M;
         I2C_RecoverBus();
-        //xSemaphoreGiveFromISR(completionSem, pxHigherPriorityTaskWoken);
+        xSemaphoreGiveFromISR(completionSem, pxHigherPriorityTaskWoken);
         return;
     }
 
